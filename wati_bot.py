@@ -1,140 +1,72 @@
 from fastapi import FastAPI, Request
 import requests
 import os
-from datetime import datetime
 
 app = FastAPI()
 
-# ===============================
-# ENV VARIABLES
-# ===============================
-
-WATI_TOKEN = os.getenv("WATI_TOKEN")
+# WATI credentials from Render Environment Variables
+WATI_API_KEY = os.getenv("WATI_API_KEY")
 WATI_BASE_URL = os.getenv("WATI_BASE_URL")
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Root route (prevents "Not Found" error)
+@app.get("/")
+def home():
+    return {"message": "WhatsApp Bot is running 🚀"}
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+# Webhook endpoint (WATI will send messages here)
+@app.post("/webhook")
+async def webhook(request: Request):
+    
+    data = await request.json()
+    print("Incoming data:", data)
 
-TABLE_NAME = "admissions_chat"
+    try:
+        message = data["text"]
+        phone = data["from"]
 
-# ===============================
-# BROCHURE LOCKED DATA
-# ===============================
+        reply = generate_reply(message)
 
-BROCHURE_KNOWLEDGE = """
-ACCA:
-- Coaching Fee: ₹3,50,000 – ₹4,50,000
-- Duration: 2–3 years
-- Structured mentoring included.
+        send_message(phone, reply)
 
-CMA:
-- Coaching Fee: ₹2,50,000 – ₹3,50,000
-- Duration: 1.5–2 years
+        return {"status": "success"}
 
-Scholarship:
-- Installment support available.
-"""
+    except Exception as e:
+        print("Error:", e)
+        return {"status": "error", "message": str(e)}
 
-# ===============================
-# AI RESPONSE
-# ===============================
 
-def generate_ai_response(user_input):
+# Bot reply logic
+def generate_reply(message):
 
-    system_prompt = f"""
-You are an academic counsellor at Invisor Global.
+    message = message.lower()
 
-Use ONLY this data:
+    if "hello" in message:
+        return "Hi 👋 How can I help you today?"
 
-{BROCHURE_KNOWLEDGE}
+    elif "price" in message:
+        return "Please visit our website for pricing details."
 
-Rules:
-- Do NOT add outside info.
-- Keep response under 120 words.
-- Friendly tone.
-"""
+    elif "help" in message:
+        return "Our support team will contact you shortly."
 
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    else:
+        return "Sorry, I didn't understand that. Please type *help*."
 
-    data = {
-        "model": "llama-3.1-8b-instant",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_input}
-        ],
-        "temperature": 0.4
-    }
 
-    response = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers=headers,
-        json=data
-    )
-
-    return response.json()["choices"][0]["message"]["content"]
-
-# ===============================
-# SAVE TO SUPABASE
-# ===============================
-
-def save_to_supabase(phone, message):
-
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
-
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "phone_number": phone,
-        "full_chat": [{"role": "user", "content": message}],
-        "created_at": datetime.utcnow().isoformat()
-    }
-
-    requests.post(url, headers=headers, json=data)
-
-# ===============================
-# SEND MESSAGE BACK TO WATI
-# ===============================
-
-def send_wati_message(phone, message):
+# Send message through WATI API
+def send_message(phone, message):
 
     url = f"{WATI_BASE_URL}/api/v1/sendSessionMessage/{phone}"
 
     headers = {
-        "Authorization": f"Bearer {WATI_TOKEN}",
+        "Authorization": f"Bearer {WATI_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    data = {
+    payload = {
         "messageText": message
     }
 
-    requests.post(url, headers=headers, json=data)
+    response = requests.post(url, json=payload, headers=headers)
 
-# ===============================
-# WEBHOOK ENDPOINT
-# ===============================
-
-@app.post("/webhook")
-async def webhook(request: Request):
-
-    body = await request.json()
-
-    phone = body["waId"]
-    message = body["text"]
-
-    reply = generate_ai_response(message)
-
-    save_to_supabase(phone, message)
-
-    send_wati_message(phone, reply)
-
-    return {"status": "success"}
+    print("WATI response:", response.text)
